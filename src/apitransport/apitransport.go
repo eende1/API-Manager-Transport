@@ -11,16 +11,19 @@ import (
 	"os"
 	"strings"
 	"tenant"
+	"encoding/base64"
+	"github"
 )
 
-func Handler(w http.ResponseWriter, r *http.Request) {
+func CreateTransportHandler(syncIn chan github.Sync, syncOut chan error) (func (w http.ResponseWriter, r *http.Request)) {
+return func (w http.ResponseWriter, r *http.Request) {
 	apiTest, err := apitesting.ParseApiTest(r)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("{'status':'%s'}", err), 400)
 		return
 	}
 
-	numTests := apitesting.NumTests + 1
+	numTests := apitesting.NumTests + 2
 	testResults := make(chan apitesting.TestResult, numTests)
 
 	apiTest.ExecuteTests(testResults)
@@ -34,6 +37,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 	go apitesting.KVMAuthorizationTest(testResults, strings.ToLower(apiTest.Tenant), apiTest.APIName, apiTest.TokenClientID,
 		os.Getenv("SCPI_AUTH"), "authorized in target tenant")
+	go apitesting.LDAPAuthenticationTest(testResults, apiTest.Email, apiTest.Password, "ldap authentication test")
 
 	results := apitesting.Responses{}
 	transport := true
@@ -45,7 +49,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 	if transport {
 		t := apitesting.TestResult{"transport", false, nil}
-		//resp, err := apitransport.Transport(u.Tenant, u.APIName, os.Getenv("SCPI_AUTH"))
+		//resp, err := apitransport.Transport(u.Tenant, u.APIName, u.TokenClientID, os.Getenv("SCPI_AUTH"), syncIn, syncOut)
 		resp, err := true, error(nil)
 		if err == nil && resp {
 			t.Pass = true
@@ -56,8 +60,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	resultJson, err := json.Marshal(results)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("{'error':'%s'}", err.Error()), 500)
+		return
 	}
 	w.Write([]byte(resultJson))
+}
 }
 
 func GetAPIProxy(tenantName, apiName, auth string) ([]byte, error) {
@@ -86,7 +92,7 @@ func GetAPIProxy(tenantName, apiName, auth string) ([]byte, error) {
 	return body, nil
 }
 
-func Transport(tenantName, apiName, auth string) (bool, error) {
+func Transport(tenantName, apiName, cid, auth string, syncIn chan github.Sync, syncOut chan error) (bool, error) {
 
 	APIProxy, err := GetAPIProxy(tenantName, apiName, auth)
 	if err != nil {
@@ -99,15 +105,12 @@ func Transport(tenantName, apiName, auth string) (bool, error) {
 	} else if tenantName == "qa" {
 		tenantName = "prod"
 	}
-
-	APIProxyReader := bytes.NewReader(APIProxy)
-
+	
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies", tenant.Get(tenantName)), nil)
 	if err != nil {
 		return false, err
 	}
-
 	req.Header.Add("Authorization", "Basic "+auth)
 	req.Header.Add("x-csrf-token", "fetch")
 	resp, err := client.Do(req)
@@ -116,12 +119,13 @@ func Transport(tenantName, apiName, auth string) (bool, error) {
 		return false, err
 	}
 	defer resp.Body.Close()
-
-	req, err = http.NewRequest("POST", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies", tenant.Get(tenantName)), APIProxyReader)
+	
+	str := base64.StdEncoding.EncodeToString(APIProxy)
+	req, err = http.NewRequest("POST", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies", tenant.Get(tenantName)), bytes.NewBuffer([]byte(str)))
 	if err != nil {
 		return false, err
 	}
-	req.Header.Add("Content-Type", "application/zip")
+	req.Header.Add("Content-Type", "application/octet-stream")
 	req.Header.Add("Authorization", "Basic "+auth)
 	req.Header.Add("x-csrf-token", resp.Header["X-Csrf-Token"][0])
 	cookies := resp.Cookies()
@@ -134,6 +138,14 @@ func Transport(tenantName, apiName, auth string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if resp.StatusCode != 200 {
+		return false, errors.New((fmt.Sprintf("returned non 200 response: %d", resp.StatusCode)));
+	}
+	
+	m := make(map[string][]byte)
+	m[apiName] = APIProxy
+	syncIn <- github.Sync{m, tenantName, fmt.Sprintf("API Transported by cid:%s", cid)}
+	<- syncOut
 
 	return true, nil
 }

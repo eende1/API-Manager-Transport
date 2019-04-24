@@ -17,11 +17,13 @@ const oktaURL string = "https://nike-qa.oktapreview.com/oauth2/ausa0mcornpZLi0C4
 const NumTests = 3
 
 type ApiTest struct {
-	Url           string
+	Url string `json:"-"`
 	Token         string
 	MetaDataPath  string
 	Tenant        string
 	APIName       string
+	Email string
+	Password string
 	TokenClientID string `json:"cid"`
 }
 
@@ -62,14 +64,18 @@ func ParseApiTest(r *http.Request) (ApiTest, error) {
 	if r.Body == nil {
 		return u, errors.New("Request does not have body.")
 	}
-
+	
 	err := json.NewDecoder(r.Body).Decode(&u)
 	if err != nil {
 		return u, err
 	}
-
-	u.Url = fmt.Sprintf("https://nikescp%s.apimanagement.us2.hana.ondemand.com%s", u.Tenant, u.Url)
-
+	
+	url, err := GetAPIURL(strings.ToLower(u.Tenant), u.APIName, os.Getenv("SCPI_AUTH"))
+	if err != nil {
+		return u, err
+	}
+	u.Url = fmt.Sprintf("https://nikescp%s.apimanagement.us2.hana.ondemand.com%s", u.Tenant, url)
+	
 	jwt := strings.Split(u.Token, ".")
 	if len(jwt) < 3 {
 		return u, errors.New("Invalid Token.")
@@ -93,6 +99,8 @@ func ParseApiTest(r *http.Request) (ApiTest, error) {
 }
 
 func (a *ApiTest) ExecuteTests(c chan TestResult) {
+	
+	
 	go UnauthorizedClientTest(c, a.Url, a.MetaDataPath, "unauthorized client test")
 	go CallAPI(c, a.Url, a.MetaDataPath, a.Token, "api authentication test")
 	go KVMAuthorizationTest(c, strings.ToLower(a.Tenant), a.APIName, a.TokenClientID,

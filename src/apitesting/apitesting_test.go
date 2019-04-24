@@ -80,3 +80,14 @@ func TestKVMAuthorizationTest(t *testing.T) {
 		t.Errorf("Got true, should have gotten false")
 	}
 }
+
+func TestGetAPIURL(t *testing.T) {
+	auth := os.Getenv("SCPI_AUTH")
+	url, err := GetAPIURL("dev", "API_NIKE_CONVERSE_GET_ORDER_STATUS", auth)
+	if err != nil {
+		t.Errorf("returned an error: %s", err)
+	}
+	if url != "/Converse/OrderStatus" {
+		t.Error("returned incorrect url")
+	}
+}
