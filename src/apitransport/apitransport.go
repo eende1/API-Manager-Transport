@@ -29,13 +29,12 @@ return func (w http.ResponseWriter, r *http.Request) {
 	apiTest.ExecuteTests(testResults)
 
 	// Advance tenant
+	kvmAuthTenant := "PROD"
 	if apiTest.Tenant == "DEV" {
-		apiTest.Tenant = "QA"
-	} else {
-		apiTest.Tenant = "PROD"
+		kvmAuthTenant = "QA"
 	}
 
-	go apitesting.KVMAuthorizationTest(testResults, strings.ToLower(apiTest.Tenant), apiTest.APIName, apiTest.TokenClientID,
+	go apitesting.KVMAuthorizationTest(testResults, strings.ToLower(kvmAuthTenant), apiTest.APIName, apiTest.TokenClientID,
 		os.Getenv("SCPI_AUTH"), "authorized in target tenant")
 	go apitesting.LDAPAuthenticationTest(testResults, apiTest.Email, apiTest.Password, "ldap authentication test")
 
@@ -49,8 +48,10 @@ return func (w http.ResponseWriter, r *http.Request) {
 
 	if transport {
 		t := apitesting.TestResult{"transport", false, nil}
-		//resp, err := apitransport.Transport(u.Tenant, u.APIName, u.TokenClientID, os.Getenv("SCPI_AUTH"), syncIn, syncOut)
-		resp, err := true, error(nil)
+		resp, err := Transport(strings.ToLower(apiTest.Tenant), apiTest.APIName, apiTest.Email, os.Getenv("SCPI_AUTH"), syncIn, syncOut)
+		
+		//resp, err := true, error(nil)
+		fmt.Println(err)
 		if err == nil && resp {
 			t.Pass = true
 		}
@@ -81,7 +82,7 @@ func GetAPIProxy(tenantName, apiName, auth string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, errors.New("Returned non 200 response")
+		return nil, errors.New("Returned non 200 response getting APIProxy")
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
@@ -93,7 +94,6 @@ func GetAPIProxy(tenantName, apiName, auth string) ([]byte, error) {
 }
 
 func Transport(tenantName, apiName, cid, auth string, syncIn chan github.Sync, syncOut chan error) (bool, error) {
-
 	APIProxy, err := GetAPIProxy(tenantName, apiName, auth)
 	if err != nil {
 		return false, err
@@ -144,7 +144,7 @@ func Transport(tenantName, apiName, cid, auth string, syncIn chan github.Sync, s
 	
 	m := make(map[string][]byte)
 	m[apiName] = APIProxy
-	syncIn <- github.Sync{m, tenantName, fmt.Sprintf("API Transported by cid:%s", cid)}
+	syncIn <- github.Sync{m, tenantName, fmt.Sprintf("API Transported by %s", cid)}
 	<- syncOut
 
 	return true, nil
