@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"sync"
 )
 
 type Sync struct {
@@ -73,26 +74,31 @@ func getAllAPINames(tenantName, auth string) (APIProxies, error) {
 
 	return a, nil
 }
-
+type safeMap struct {
+	mux sync.Mutex
+	m   map[string][]byte
+}
 func GetAllAPIZip(tenantName, auth string) (map[string][]byte) {
 	APIProxies, err := getAllAPINames(tenantName, auth)
 	if err != nil {
 		log.Fatal(err)
 	}
 	done := make(chan bool, len(APIProxies.APIs))
-	m := make(map[string][]byte)
+	//m := make(map[string][]byte)
+	sm := safeMap{m: make(map[string][]byte)}
 	for _, a := range APIProxies.APIs {
 		fmt.Println(a.Name)
-		go GetAPIZip(done, tenantName, a.Name, auth, m)
+		go GetAPIZip(done, tenantName, a.Name, auth, &sm)
 	}
 
 	for i := 0; i < len(APIProxies.APIs); i++ {
 		<-done
 	}
-	return m
+	close(done)
+	return sm.m
 }
 // UNEXPORT THIS AT SOME POINT
-func GetAPIZip(c chan bool, tenantName, apiName, auth string, m map[string][]byte) ([]byte, error) {
+func GetAPIZip(c chan bool, tenantName, apiName, auth string, sm *safeMap) ([]byte, error) {
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies?name=%s", tenantGet(tenantName), apiName), nil)
@@ -115,8 +121,9 @@ func GetAPIZip(c chan bool, tenantName, apiName, auth string, m map[string][]byt
 	if resp.StatusCode != 200 {
 		return nil, errors.New("returned non 200 response")
 	}
-
-	m[apiName] = respBytes
+	(*sm).mux.Lock()
+	(*sm).m[apiName] = respBytes
+	(*sm).mux.Unlock()
 	c <- true
 
 	return respBytes, nil

@@ -47,7 +47,7 @@ func main() {
 			fmt.Printf("sync took %s", elapsed)
 		}
 	}(syncIn, syncOut)
-	/*
+	
 	go func(syncIn chan github.Sync, syncOut chan error) {
 		tenant := "sandbox"
 		for {
@@ -59,7 +59,7 @@ func main() {
 			time.Sleep(20 * time.Second)
 		}
 	}(syncIn, syncOut)
-	
+	/*
 	c := make(chan bool)
 	m := make(map[string][]byte)
 	go github.GetAPIZip(c, "sandbox", "API_NIKE_TMP_SYNC_TEST", os.Getenv("SCPI_AUTH"), m)
@@ -87,9 +87,11 @@ func advanceTenant(tenant string) string {
 	case "dev":
 		return "qa"
 	case "qa":
-		return "prod"
+		return "sandbox"
+	/*	
 	case "prod":
 		return "sandbox"
+        */
 	}
 	return ""
 }
