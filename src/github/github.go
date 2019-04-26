@@ -1,9 +1,8 @@
 package github
 
 import (
-	"archive/zip"
-	"encoding/xml"
 	"errors"
+	"archive/zip"
 	"fmt"
 	"gopkg.in/src-d/go-billy.v4"
 	"gopkg.in/src-d/go-billy.v4/memfs"
@@ -17,9 +16,10 @@ import (
 	"os"
 	"io"
 	"path/filepath"
-	"strings"
 	"time"
 	"sync"
+	"tenant"
+	"apiinfo"
 )
 
 type Sync struct {
@@ -28,145 +28,54 @@ type Sync struct {
 	LogMessage string
 }
 
-var tenantMap map[string]string = map[string]string{"dev": "dfc3ccb1f", "qa": "d8b3bfb89", "prod": "d9cfb42fa", "sandbox": "d6c83d68e"}
-
-func tenantGet(tenant string) string {
-	return tenantMap[strings.ToLower(tenant)]
-}
-
-type APIProxy struct {
-	Name string `xml:"name"`
-}
-
-type APIProxies struct {
-	APIs []APIProxy `xml:"entry>content>properties"`
-}
-
-func getAllAPINames(tenantName, auth string) (APIProxies, error) {
-	var a APIProxies
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Management.svc/APIProxies", tenantGet(tenantName)), nil)
-	if err != nil {
-		return a, err
-	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
-	resp, err := client.Do(req)
-	if err != nil {
-		return a, err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return a, err
-	}
-
-	if resp.StatusCode != 200 {
-		return a, errors.New("returned non 200 response")
-	}
-
-	err = xml.Unmarshal(respBytes, &a)
-	if err != nil {
-		return a, err
-	}
-
-	return a, nil
-}
-type safeMap struct {
-	mux sync.Mutex
-	m   map[string][]byte
-}
-func GetAllAPIZip(tenantName, auth string) (map[string][]byte) {
-	APIProxies, err := getAllAPINames(tenantName, auth)
-	if err != nil {
-		log.Fatal(err)
-	}
-	done := make(chan bool, len(APIProxies.APIs))
-	//m := make(map[string][]byte)
-	sm := safeMap{m: make(map[string][]byte)}
-	for _, a := range APIProxies.APIs {
-		fmt.Println(a.Name)
-		go GetAPIZip(done, tenantName, a.Name, auth, &sm)
-	}
-
-	for i := 0; i < len(APIProxies.APIs); i++ {
-		<-done
-	}
-	close(done)
-	return sm.m
-}
-// UNEXPORT THIS AT SOME POINT
-func GetAPIZip(c chan bool, tenantName, apiName, auth string, sm *safeMap) ([]byte, error) {
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies?name=%s", tenantGet(tenantName), apiName), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, errors.New("returned non 200 response")
-	}
-	(*sm).mux.Lock()
-	(*sm).m[apiName] = respBytes
-	(*sm).mux.Unlock()
-	c <- true
-
-	return respBytes, nil
-}
-
 type Repo struct {
 	fs billy.Filesystem
 	r *git.Repository
 	worktree *git.Worktree
 }
 
-func InitializeGithubRepo() (Repo, error){
-	fs := memfs.New()
-	storer := memory.NewStorage()
-
-	g, err := git.Clone(storer, fs, &git.CloneOptions{
-		URL: "https://api.github.nike.com/scp/APIM-Backup",
-		Auth: &githttp.BasicAuth{
-			Username: "tandr9",
-			Password: os.Getenv("GITHUB_TOKEN"),
-		},
-	})
-	if err != nil {
-		return Repo{fs, g, nil}, err
+func GithubTenantSync(syncIn chan Sync, syncOut chan error) {
+	tenantName := "sandbox"
+	for {
+		time.Sleep(20 * time.Second)
+		fmt.Println(tenantName)
+		apiProxies, err := getAllAPIZip(tenantName, os.Getenv("SCPI_AUTH"))
+		if err != nil {
+			tenantName = tenant.Advance(tenantName)
+			continue
+		}
+		syncIn <- Sync{apiProxies, tenantName, ""}
+		<- syncOut
+		tenantName = tenant.Advance(tenantName)
+		
 	}
-
-	w, err := g.Worktree()
-
-	return Repo{fs, g, w}, err
 }
 
-func (g *Repo) SyncAPIs(proxies map[string]([]byte), tenantName, logMessage string) {
-	
+func StartGithubHandler(syncIn chan Sync, syncOut chan error) {
+	apimRepo, err := initializeGithubRepo();
+	if err != nil {
+		panic("Failed to initialize github repository.")
+	}
+
+	for {
+		toSync := <- syncIn
+		apimRepo.SyncAPIs(toSync.Proxies, toSync.TenantName, toSync.LogMessage)
+		syncOut <- nil
+	}
+}
+
+func (g *Repo) SyncAPIs(proxies map[string]([]byte), tenantName, logMessage string) {	
 	for name, proxy := range proxies {
 		err := unzip(proxy, &(g.fs), fmt.Sprintf("%s/%s", tenantName, name))
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("Failed to unzip in SyncAPIS\n")
 		}
 		// Include a log message unless an empty message was passed.
 		if logMessage != "" {
 			err = logChange(logMessage, fmt.Sprintf("%s/%s/%s", tenantName, name, "change_log.txt"), &(g.fs))
 			if err != nil {
-				log.Fatal(err)
+				log.Printf("Failed to log change in SyncAPIS\n")
+				return
 			}
 		}
 	}
@@ -193,10 +102,91 @@ func (g *Repo) SyncAPIs(proxies map[string]([]byte), tenantName, logMessage stri
 	}
 }
 
+func initializeGithubRepo() (Repo, error){
+	fs := memfs.New()
+	storer := memory.NewStorage()
+
+	g, err := git.Clone(storer, fs, &git.CloneOptions{
+		URL: "https://api.github.nike.com/scp/APIM-Backup",
+		Auth: &githttp.BasicAuth{
+			Username: "tandr9",
+			Password: os.Getenv("GITHUB_TOKEN"),
+		},
+	})
+	if err != nil {
+		return Repo{fs, g, nil}, err
+	}
+
+	w, err := g.Worktree()
+
+	return Repo{fs, g, w}, err
+}
+
+type safeMap struct {
+	mux sync.Mutex
+	m   map[string][]byte
+}
+
+func getAllAPIZip(tenantName, auth string) (map[string][]byte, error) {
+	APIProxies, err := apiinfo.GetAllAPINames(tenantName, auth)
+	if err != nil {
+		return nil, err
+	}
+	done := make(chan bool, len(APIProxies.APIs))
+	//m := make(map[string][]byte)
+	sm := safeMap{m: make(map[string][]byte)}
+	for _, a := range APIProxies.APIs {
+		go getAPIZip(done, tenantName, a.Name, auth, &sm)
+	}
+
+	success := true
+	for i := 0; i < len(APIProxies.APIs); i++ {
+		success = success && <-done
+	}
+	close(done)
+	if !success {
+		return nil, errors.New("Encountered error getting an API Zip")
+	}
+	return sm.m, nil
+}
+
+func getAPIZip(c chan bool, tenantName, apiName, auth string, sm *safeMap) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies?name=%s", tenant.Get(tenantName), apiName), nil)
+	if err != nil {
+		c <- false
+		return
+	}
+
+	req.Header.Add("Authorization", "Basic "+auth)
+	resp, err := client.Do(req)
+	if err != nil {
+		c <- false
+		return
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		c <- false
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		c <- false
+		return
+	}
+	(*sm).mux.Lock()
+	(*sm).m[apiName] = respBytes
+	(*sm).mux.Unlock()
+	c <- true
+}
+
 func unzip(proxy []byte, fs *billy.Filesystem, stem string) error {
 	file, err := ioutil.TempFile("", "zip")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer os.Remove(file.Name())
 	err = ioutil.WriteFile(file.Name(), proxy, 0755)
@@ -234,7 +224,6 @@ func unzip(proxy []byte, fs *billy.Filesystem, stem string) error {
 		} else {
 			(*fs).MkdirAll(filepath.Dir(path), f.Mode())
 			f, err := (*fs).OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-			//fmt.Println(path)
 			if err != nil {
 				return err
 			}
@@ -257,7 +246,6 @@ func unzip(proxy []byte, fs *billy.Filesystem, stem string) error {
 			return err
 		}
 	}
-
 	return nil
 }
 
