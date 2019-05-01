@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	
+
 	if os.Getenv("UNAUTHORIZEDID_SECRET") == "" {
 		panic("No Secret for unauthorized client id in environement. Please specif a secret on the environment variable UNAUTHORIZEDID_SECRET.")
 	}
