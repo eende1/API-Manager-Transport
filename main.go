@@ -34,7 +34,7 @@ func main() {
 	r.HandleFunc("/api/test", apitesting.Handler).Methods("POST")
 	r.HandleFunc("/api/transport", apitransport.CreateTransportHandler(&locks, syncIn, syncOut)).Methods("POST")
 	r.HandleFunc("/api/{tenant}/Management.svc/{target}", apiinfo.Handler).Methods("GET")
-	
+
 	//Uncomment for docker builds
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("/go/bin/dist/api-manager/")))
 	//Uncomment for local builds
