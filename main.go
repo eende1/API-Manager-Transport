@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"github"
+	"tenant"
 )
 
 func main() {
@@ -24,12 +25,14 @@ func main() {
 
 	syncIn := make(chan github.Sync)
 	syncOut := make(chan error)
+	locks := tenant.InitializeTenantLocks()
+
 	go github.StartGithubHandler(syncIn,syncOut)
-	go github.GithubTenantSync(syncIn, syncOut)
+	go github.GithubTenantSync(&locks, syncIn, syncOut)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/api/test", apitesting.Handler).Methods("POST")
-	r.HandleFunc("/api/transport", apitransport.CreateTransportHandler(syncIn, syncOut)).Methods("POST")
+	r.HandleFunc("/api/transport", apitransport.CreateTransportHandler(&locks, syncIn, syncOut)).Methods("POST")
 	r.HandleFunc("/api/{tenant}/Management.svc/{target}", apiinfo.Handler).Methods("GET")
 	
 	//Uncomment for docker builds

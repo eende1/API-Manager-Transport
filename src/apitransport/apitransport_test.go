@@ -4,10 +4,14 @@ import (
 	"os"
 	"testing"
 	"github"
+	"tenant"
 )
 
 func TestGetAPIProxy(t *testing.T) {
 	auth := os.Getenv("SCPI_AUTH")
+	if auth == "" {
+		t.Errorf("No SCPI_AUTH in environment")
+	}
 
 	res, err := GetAPIProxy("dev", "TRACE_JENKINS_TEST", auth)
 	if err != nil {
@@ -18,15 +22,20 @@ func TestGetAPIProxy(t *testing.T) {
 
 func TestTransport(t *testing.T) {
 	auth := os.Getenv("SCPI_AUTH")
+	if auth == "" {
+		t.Errorf("No SCPI_AUTH in environment")
+	}
 	syncIn := make(chan github.Sync)
 	syncOut := make(chan error)
+
+	locks := tenant.InitializeTenantLocks()
 	
 	go func(syncIn chan github.Sync, syncOut chan error) {
 		_ = <-syncIn
 		syncOut <- nil
 	}(syncIn, syncOut)
 
-	_, err := Transport("dev", "TRACE_JENKINS_TEST", "gotestcid", auth, syncIn, syncOut)
+	_, err := Transport("dev", "TRACE_JENKINS_TEST", "gotestcid", auth, &locks, syncIn, syncOut)
 	if err != nil {
 		t.Errorf("returned an error: %s", err)
 	}
@@ -34,22 +43,17 @@ func TestTransport(t *testing.T) {
 
 func TestTransportWithUpdate(t *testing.T) {
 	auth := os.Getenv("SCPI_AUTH")
+	if auth == "" {
+		t.Errorf("No SCPI_AUTH in environment")
+	}
 	syncIn := make(chan github.Sync)
 	syncOut := make(chan error)
 
-	go func(syncIn chan github.Sync, syncOut chan error) {
-		apimRepo, err := github.InitializeGithubRepo();
-		//scpiAuth := os.Getenv("SCPI_AUTH")
-		if err != nil {
-			panic("Failed to initialize github repository.")
-		}
+	locks := tenant.InitializeTenantLocks()
 
-		toSync := <- syncIn
-		apimRepo.SyncAPIs(toSync.Proxies, toSync.TenantName, toSync.LogMessage)
-		syncOut <- nil
-	}(syncIn, syncOut)
-
-	_, err := Transport("dev", "TRACE_JENKINS_TEST", "gotestcid", auth, syncIn, syncOut)
+	go github.StartGithubHandler(syncIn,syncOut)
+	go github.GithubTenantSync(&locks, syncIn, syncOut)
+	_, err := Transport("dev", "TRACE_JENKINS_TEST", "gotestcid", auth, &locks, syncIn, syncOut)
 	if err != nil {
 		t.Errorf("returned an error: %s", err)
 	}

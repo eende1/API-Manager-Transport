@@ -34,20 +34,28 @@ type Repo struct {
 	worktree *git.Worktree
 }
 
-func GithubTenantSync(syncIn chan Sync, syncOut chan error) {
+func GithubTenantSync(tenantLock *tenant.Lock, syncIn chan Sync, syncOut chan error) {
 	tenantName := "sandbox"
 	for {
 		time.Sleep(20 * time.Second)
 		fmt.Println(tenantName)
+		// Acquire lock on tenant
+		lock, ok := (*tenantLock).Map[tenantName]
+		if !ok {
+			continue
+		}
+		(*lock).Lock()
+		
 		apiProxies, err := getAllAPIZip(tenantName, os.Getenv("SCPI_AUTH"))
 		if err != nil {
+			(*lock).Unlock()
 			tenantName = tenant.Advance(tenantName)
 			continue
 		}
 		syncIn <- Sync{apiProxies, tenantName, ""}
 		<- syncOut
+		(*lock).Unlock()
 		tenantName = tenant.Advance(tenantName)
-		
 	}
 }
 

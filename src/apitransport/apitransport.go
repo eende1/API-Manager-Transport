@@ -15,7 +15,7 @@ import (
 	"github"
 )
 
-func CreateTransportHandler(syncIn chan github.Sync, syncOut chan error) (func (w http.ResponseWriter, r *http.Request)) {
+func CreateTransportHandler(tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error) (func (w http.ResponseWriter, r *http.Request)) {
 return func (w http.ResponseWriter, r *http.Request) {
 	apiTest, err := apitesting.ParseApiTest(r)
 	if err != nil {
@@ -48,7 +48,7 @@ return func (w http.ResponseWriter, r *http.Request) {
 
 	if transport {
 		t := apitesting.TestResult{"transport", false, nil}
-		resp, err := Transport(strings.ToLower(apiTest.Tenant), apiTest.APIName, apiTest.Email, os.Getenv("SCPI_AUTH"), syncIn, syncOut)
+		resp, err := Transport(strings.ToLower(apiTest.Tenant), apiTest.APIName, apiTest.Email, os.Getenv("SCPI_AUTH"), tenantLock, syncIn, syncOut)
 		
 		//resp, err := true, error(nil)
 		fmt.Println(err)
@@ -93,7 +93,14 @@ func GetAPIProxy(tenantName, apiName, auth string) ([]byte, error) {
 	return body, nil
 }
 
-func Transport(tenantName, apiName, cid, auth string, syncIn chan github.Sync, syncOut chan error) (bool, error) {
+func Transport(tenantName, apiName, cid, auth string, tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error) (bool, error) {
+	lock, ok := (*tenantLock).Map[tenantName]
+	if !ok {
+		return false, errors.New("Failed to get lock for this tenant in transport")
+	}
+	(*lock).Lock()
+	defer (*lock).Unlock()
+	
 	APIProxy, err := GetAPIProxy(tenantName, apiName, auth)
 	if err != nil {
 		return false, err
