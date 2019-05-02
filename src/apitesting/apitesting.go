@@ -107,6 +107,23 @@ func (a *ApiTest) ExecuteTests(c chan TestResult) {
 		os.Getenv("SCPI_AUTH"), "kvm authorization test")
 }
 
+func APICall(url,  token, method string) (*http.Response, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 func CallAPI(c chan TestResult, url, metaDataPath, token, name string) {
 	client := &http.Client{}
 

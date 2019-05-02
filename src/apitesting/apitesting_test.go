@@ -91,3 +91,13 @@ func TestGetAPIURL(t *testing.T) {
 		t.Error("returned incorrect url")
 	}
 }
+
+func TestAPICall(t *testing.T) {
+	resp, err := APICall("http://postman-echo.com/get", "no auth", "GET")
+	if err != nil {
+		t.Errorf("returned an error: %s", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("returned non 200 response code")
+	}
+}
