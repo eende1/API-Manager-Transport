@@ -45,7 +45,7 @@ func GithubTenantSync(tenantLock *tenant.Lock, syncIn chan Sync, syncOut chan er
 			continue
 		}
 		(*lock).Lock()
-		
+
 		apiProxies, err := getAllAPIZip(tenantName, os.Getenv("SCPI_AUTH"))
 		if err != nil {
 			(*lock).Unlock()
@@ -253,6 +253,18 @@ func unzip(proxy []byte, fs *billy.Filesystem, stem string) error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func writeOpenAPISpec(spec, filename string, fs *billy.Filesystem) error {
+	f, err := (*fs).OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err = f.Write([]byte(spec)); err != nil {
+		return err
 	}
 	return nil
 }

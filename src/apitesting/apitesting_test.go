@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-func TestAPICall(t *testing.T) {
-	c := make(chan TestResult)
-	go CallAPI(c, "https://postman-echo.com/get", "", "", "api call test")
-	result := <-c
-	if result.Err != nil {
-		t.Errorf("returned an error: %s", result.Err)
-	}
-	if !result.Pass {
-		t.Errorf("response code was not 200")
-	}
-}
-
 func TestGenerateToken(t *testing.T) {
 	token, err := GenerateToken("nike.sapae.unauthorizedid",
 		"n4YFiCwufDiUzUO7tQVjcccsU3nmPt9W5aiVEFWGgskFVcSJ9v9XN98eqCE3dOOW")
@@ -28,7 +16,7 @@ func TestGenerateToken(t *testing.T) {
 
 func TestUnauthorizedClientTest(t *testing.T) {
 	c := make(chan TestResult)
-	go UnauthorizedClientTest(c, "https://postman-echo.com/get", "", "unathorized client test")
+	go UnauthorizedClientTest(c, "https://postman-echo.com/get", "GET", "unathorized client test")
 	result := <-c
 	if result.Err != nil {
 		t.Errorf("returned an error: %s", result.Err)
@@ -37,7 +25,7 @@ func TestUnauthorizedClientTest(t *testing.T) {
 		t.Errorf("should have received false")
 	}
 
-	go UnauthorizedClientTest(c, "https://nikescpdev.apimanagement.us2.hana.ondemand.com/DeliveryDetails", "/$metadata", "unathorized client test")
+	go UnauthorizedClientTest(c, "https://nikescpdev.apimanagement.us2.hana.ondemand.com/DeliveryDetails/$metadata", "GET", "unathorized client test")
 	result = <-c
 	if result.Err != nil {
 		t.Errorf("returned an error: %s", result.Err)
@@ -99,5 +87,19 @@ func TestAPICall(t *testing.T) {
 	}
 	if resp.StatusCode != 200 {
 		t.Errorf("returned non 200 response code")
+	}
+}
+
+
+func TestAPICallTest(t *testing.T) {
+	c := make(chan TestResult)
+	go APICallTest(c, "http://postman-echo.com/get", "GET", "notokenneeded", "API Call Test")
+	result := <-c
+	if result.Err != nil {
+		t.Errorf("returned an error: %s", result.Err)
+	}
+
+	if !result.Pass {
+		t.Error("test should have passed, but it failed")
 	}
 }

@@ -64,18 +64,18 @@ func ParseApiTest(r *http.Request) (ApiTest, error) {
 	if r.Body == nil {
 		return u, errors.New("Request does not have body.")
 	}
-	
+
 	err := json.NewDecoder(r.Body).Decode(&u)
 	if err != nil {
 		return u, err
 	}
-	
+
 	url, err := GetAPIURL(strings.ToLower(u.Tenant), u.APIName, os.Getenv("SCPI_AUTH"))
 	if err != nil {
 		return u, err
 	}
 	u.Url = fmt.Sprintf("https://nikescp%s.apimanagement.us2.hana.ondemand.com%s", u.Tenant, url)
-	
+
 	jwt := strings.Split(u.Token, ".")
 	if len(jwt) < 3 {
 		return u, errors.New("Invalid Token.")
@@ -99,10 +99,8 @@ func ParseApiTest(r *http.Request) (ApiTest, error) {
 }
 
 func (a *ApiTest) ExecuteTests(c chan TestResult) {
-	
-	
-	go UnauthorizedClientTest(c, a.Url, a.MetaDataPath, "unauthorized client test")
-	go CallAPI(c, a.Url, a.MetaDataPath, a.Token, "api authentication test")
+	go UnauthorizedClientTest(c, a.Url + a.MetaDataPath, "GET", "unauthorized client test")
+	go APICallTest(c, a.Url + a.MetaDataPath, a.Token, "GET", "api authentication test")
 	go KVMAuthorizationTest(c, strings.ToLower(a.Tenant), a.APIName, a.TokenClientID,
 		os.Getenv("SCPI_AUTH"), "kvm authorization test")
 }
@@ -124,30 +122,15 @@ func APICall(url,  token, method string) (*http.Response, error) {
 	return resp, nil
 }
 
-func CallAPI(c chan TestResult, url, metaDataPath, token, name string) {
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", url+metaDataPath, nil)
+func APICallTest(c chan TestResult, url, method, token, name string) {
+	resp, err := APICall(url, token, method)
 	if err != nil {
 		c <- TestResult{name, false, err}
 		return
 	}
 
-	req.Header.Add("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-
-	if err != nil {
-		c <- TestResult{name, false, err}
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		c <- TestResult{name, false, nil}
-		return
-	}
-
-	c <- TestResult{name, true, nil}
+	c <- TestResult{name, (resp.StatusCode < 200 || resp.StatusCode > 299), nil}
+	resp.Body.Close()
 }
 
 type OktaResponse struct {
@@ -185,20 +168,20 @@ func GenerateToken(clientID, secret string) (string, error) {
 	return r.Token, nil
 }
 
-func UnauthorizedClientTest(c chan TestResult, url, metaDataPath, name string) {
+func UnauthorizedClientTest(c chan TestResult, url, method, name string) {
 	token, err := GenerateToken("nike.sapae.unauthorizedid", os.Getenv("UNAUTHORIZEDID_SECRET"))
 
 	if err != nil {
 		c <- TestResult{name, false, err}
 		return
 	}
-	c2 := make(chan TestResult)
-	go CallAPI(c2, url, metaDataPath, token, name)
-	result := <-c2
-	if result.Err != nil {
-		c <- TestResult{name, false, result.Err}
+	resp, err := APICall(url, token, method)
+	if err != nil {
+		c <- TestResult{name, false, err}
 		return
 	}
-	// CallAPI test should fail, so return opposite of CallAPI's result
-	c <- TestResult{name, !result.Pass, nil}
+
+	// CallAPI should retun a non 200 response
+	c <- TestResult{name, !(resp.StatusCode >= 200 && resp.StatusCode < 300), nil}
+	resp.Body.Close()
 }
