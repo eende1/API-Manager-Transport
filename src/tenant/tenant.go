@@ -35,6 +35,6 @@ func InitializeTenantLocks() Lock {
 	for k, _ := range(tenantMap) {
 		tmp := sync.Mutex{}
 		lockMap[k] = &tmp
-	}	 
+	}
 	return Lock{lockMap}
 }

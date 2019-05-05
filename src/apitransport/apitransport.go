@@ -1,21 +1,22 @@
 package apitransport
 
 import (
-	"apitesting"
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
-	"strings"
 	"tenant"
-	"encoding/base64"
 	"github"
+	"encoding/json"
+	"apitesting"
+	"apiproxy"
+	"strings"
+	"io/ioutil"
 )
 
-func CreateTransportHandler(tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error) (func (w http.ResponseWriter, r *http.Request)) {
+const conversionIflowURL = "https://l5347-iflmap.hcisbp.us2.hana.ondemand.com/http/metadatatoswagger"
+
+func CreateTransportHandler(tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error, devportalIn chan apiproxy.APIProxy) (func (w http.ResponseWriter, r *http.Request)) {
 return func (w http.ResponseWriter, r *http.Request) {
 	apiTest, err := apitesting.ParseApiTest(r)
 	if err != nil {
@@ -28,13 +29,14 @@ return func (w http.ResponseWriter, r *http.Request) {
 
 	apiTest.ExecuteTests(testResults)
 
-	// Advance tenant
-	kvmAuthTenant := "PROD"
-	if apiTest.Tenant == "DEV" {
-		kvmAuthTenant = "QA"
+	// Assume highest tenant, degrade if otherwise
+	kvmAuthTenant := "prod"
+	fmt.Println(apiTest.APIProxy.Tenant)
+	if apiTest.APIProxy.Tenant == "dev" {
+		kvmAuthTenant = "qa"
 	}
 
-	go apitesting.KVMAuthorizationTest(testResults, strings.ToLower(kvmAuthTenant), apiTest.APIName, apiTest.TokenClientID,
+	go apitesting.KVMAuthorizationTest(testResults, kvmAuthTenant, apiTest.APIProxy.Name, apiTest.TokenClientID,
 		os.Getenv("SCPI_AUTH"), "authorized in target tenant")
 	go apitesting.LDAPAuthenticationTest(testResults, apiTest.Email, apiTest.Password, "ldap authentication test")
 
@@ -48,12 +50,13 @@ return func (w http.ResponseWriter, r *http.Request) {
 
 	if transport {
 		t := apitesting.TestResult{"transport", false, nil}
-		resp, err := Transport(strings.ToLower(apiTest.Tenant), apiTest.APIName, apiTest.Email, os.Getenv("SCPI_AUTH"), tenantLock, syncIn, syncOut)
-		
+		resp, err := Transport(apiTest, tenantLock, syncIn, syncOut)
+
 		//resp, err := true, error(nil)
 		fmt.Println(err)
 		if err == nil && resp {
 			t.Pass = true
+			devportalIn <- apiTest.APIProxy
 		}
 		results = append(results, t)
 	}
@@ -67,92 +70,59 @@ return func (w http.ResponseWriter, r *http.Request) {
 }
 }
 
-func GetAPIProxy(tenantName, apiName, auth string) ([]byte, error) {
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies?name=%s", tenant.Get(tenantName), apiName), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("Authorization", "Basic "+auth)
-	resp, err := client.Do(req)
-
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, errors.New("Returned non 200 response getting APIProxy")
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return body, nil
-}
-
-func Transport(tenantName, apiName, cid, auth string, tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error) (bool, error) {
-	lock, ok := (*tenantLock).Map[tenantName]
+// Tranports an API Proxy from one tenant to the next while holding locks, then Sync with Github.
+func Transport(apiTest apitesting.APITest, tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error) (bool, error) {
+	lock, ok := (*tenantLock).Map[apiTest.APIProxy.Tenant]
 	if !ok {
 		return false, errors.New("Failed to get lock for this tenant in transport")
 	}
 	(*lock).Lock()
 	defer (*lock).Unlock()
-	
-	APIProxy, err := GetAPIProxy(tenantName, apiName, auth)
+	c := make(chan error)
+	go apiTest.APIProxy.GetZip(c)
+	err := <-c
 	if err != nil {
 		return false, err
 	}
 
-	//Advance tenant by one stage
-	if tenantName == "dev" {
-		tenantName = "qa"
-	} else if tenantName == "qa" {
-		tenantName = "prod"
-	}
-	
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies", tenant.Get(tenantName)), nil)
+	err = apiTest.APIProxy.Transport()
 	if err != nil {
 		return false, err
-	}
-	req.Header.Add("Authorization", "Basic "+auth)
-	req.Header.Add("x-csrf-token", "fetch")
-	resp, err := client.Do(req)
-
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	
-	str := base64.StdEncoding.EncodeToString(APIProxy)
-	req, err = http.NewRequest("POST", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies", tenant.Get(tenantName)), bytes.NewBuffer([]byte(str)))
-	if err != nil {
-		return false, err
-	}
-	req.Header.Add("Content-Type", "application/octet-stream")
-	req.Header.Add("Authorization", "Basic "+auth)
-	req.Header.Add("x-csrf-token", resp.Header["X-Csrf-Token"][0])
-	cookies := resp.Cookies()
-
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
 	}
 
-	resp, err = client.Do(req)
-	if err != nil {
-		return false, err
+	OpenAPISpec := ""
+	if apiTest.APIProxy.OData {
+		OpenAPISpec, err = convertMetaDatatoOpenAPI(apiTest.Result)
+		if err != nil {
+			fmt.Println("failed to convert metadata")
+		}
 	}
-	if resp.StatusCode != 200 {
-		return false, errors.New((fmt.Sprintf("returned non 200 response: %d", resp.StatusCode)));
-	}
-	
-	m := make(map[string][]byte)
-	m[apiName] = APIProxy
-	syncIn <- github.Sync{m, tenantName, fmt.Sprintf("API Transported by %s", cid)}
+
+	proxies := apiproxy.APIProxies{}
+	proxies.APIs = append(proxies.APIs, apiTest.APIProxy)
+	syncIn <- github.Sync{proxies, fmt.Sprintf("API Transported by %s", apiTest.Email), OpenAPISpec}
 	<- syncOut
 
-	return true, nil
+ 	return true, nil
+}
+
+func convertMetaDatatoOpenAPI(metaData string) (string, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("POST", conversionIflowURL, strings.NewReader(metaData))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Add("Authorization", "Basic "+os.Getenv("SCPI_AUTH"))
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", errors.New(fmt.Sprintf("Iflow failed to convert metadata to swagger: %s", err))
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(bodyBytes), nil
 }

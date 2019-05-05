@@ -7,19 +7,6 @@ import (
 	"tenant"
 )
 
-func TestGetAPIProxy(t *testing.T) {
-	auth := os.Getenv("SCPI_AUTH")
-	if auth == "" {
-		t.Errorf("No SCPI_AUTH in environment")
-	}
-
-	res, err := GetAPIProxy("dev", "TRACE_JENKINS_TEST", auth)
-	if err != nil {
-		t.Errorf("returned an error: %s", err)
-	}
-	t.Log(string(res))
-}
-
 func TestTransport(t *testing.T) {
 	auth := os.Getenv("SCPI_AUTH")
 	if auth == "" {

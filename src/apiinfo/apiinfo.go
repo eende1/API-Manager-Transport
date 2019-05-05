@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"tenant"
-	"encoding/xml"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -56,45 +55,4 @@ func APIInfoCall(tenantName, target, auth string) ([]byte, error) {
 		return nil, errors.New("returned non 200 response")
 	}
 	return respBytes, nil
-}
-
-type APIProxy struct {
-	Name string `xml:"name"`
-}
-
-type APIProxies struct {
-	APIs []APIProxy `xml:"entry>content>properties"`
-}
-
-func GetAllAPINames(tenantName, auth string) (APIProxies, error) {
-	var a APIProxies
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Management.svc/APIProxies", tenant.Get(tenantName)), nil)
-	if err != nil {
-		return a, err
-	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
-	resp, err := client.Do(req)
-	if err != nil {
-		return a, err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return a, err
-	}
-
-	if resp.StatusCode != 200 {
-		return a, errors.New("returned non 200 response")
-	}
-
-	err = xml.Unmarshal(respBytes, &a)
-	if err != nil {
-		return a, err
-	}
-
-	return a, nil
 }

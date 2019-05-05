@@ -7,24 +7,27 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
+	"io/ioutil"
+	"github.com/gorilla/mux"
+	"okta"
+	"apiproxy"
 )
-
-const oktaURL string = "https://nike-qa.oktapreview.com/oauth2/ausa0mcornpZLi0C40h7/v1/token"
 
 const NumTests = 3
 
-type ApiTest struct {
-	Url string `json:"-"`
-	Token         string
-	MetaDataPath  string
-	Tenant        string
-	APIName       string
+type APITest struct {
+	APIProxy apiproxy.APIProxy
+	Token   string
+	Payload string
+	Path  string
+	Method string
+
 	Email string
 	Password string
 	TokenClientID string `json:"cid"`
+	Result string
 }
 
 type TestResult struct {
@@ -41,7 +44,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("{'error':'%s'}", err), 400)
 		return
 	}
-
 	testResults := make(chan TestResult, NumTests)
 	apiTest.ExecuteTests(testResults)
 
@@ -59,22 +61,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(resultJson))
 }
 
-func ParseApiTest(r *http.Request) (ApiTest, error) {
-	var u ApiTest
+func ParseApiTest(r *http.Request) (APITest, error) {
+	var u APITest
 	if r.Body == nil {
 		return u, errors.New("Request does not have body.")
 	}
-
 	err := json.NewDecoder(r.Body).Decode(&u)
 	if err != nil {
 		return u, err
 	}
 
-	url, err := GetAPIURL(strings.ToLower(u.Tenant), u.APIName, os.Getenv("SCPI_AUTH"))
+	vars := mux.Vars(r)
+	u.APIProxy, err = apiproxy.Get(strings.ToLower(vars["tenant"]), vars["name"], os.Getenv("SCPI_AUTH"))
+
 	if err != nil {
 		return u, err
 	}
-	u.Url = fmt.Sprintf("https://nikescp%s.apimanagement.us2.hana.ondemand.com%s", u.Tenant, url)
 
 	jwt := strings.Split(u.Token, ".")
 	if len(jwt) < 3 {
@@ -95,93 +97,73 @@ func ParseApiTest(r *http.Request) (ApiTest, error) {
 	if err != nil {
 		return u, errors.New("Invalid Token.")
 	}
+	u.Method = "GET"
 	return u, nil
 }
 
-func (a *ApiTest) ExecuteTests(c chan TestResult) {
-	go UnauthorizedClientTest(c, a.Url + a.MetaDataPath, "GET", "unauthorized client test")
-	go APICallTest(c, a.Url + a.MetaDataPath, a.Token, "GET", "api authentication test")
-	go KVMAuthorizationTest(c, strings.ToLower(a.Tenant), a.APIName, a.TokenClientID,
-		os.Getenv("SCPI_AUTH"), "kvm authorization test")
+func (a *APITest) ExecuteTests(c chan TestResult) {
+	go a.UnauthorizedClientTest(c, "unauthorized client test")
+	go a.APICallTest(c, "api authentication test")
+	go KVMAuthorizationTest(c, a.APIProxy.Tenant, a.APIProxy.Name, a.TokenClientID,
+		a.APIProxy.Auth, "kvm authorization test")
 }
 
-func APICall(url,  token, method string) (*http.Response, error) {
+func (a *APITest) APICallTest(c chan TestResult, name string) {
 	client := &http.Client{}
-
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
-func APICallTest(c chan TestResult, url, method, token, name string) {
-	resp, err := APICall(url, token, method)
+	req, err := http.NewRequest(a.Method, a.APIProxy.Url+a.Path, strings.NewReader(a.Payload))
 	if err != nil {
 		c <- TestResult{name, false, err}
 		return
 	}
 
-	c <- TestResult{name, (resp.StatusCode < 200 || resp.StatusCode > 299), nil}
+	req.Header.Add("Authorization", "Bearer " + a.Token)
+	resp, err := client.Do(req)
+	if err != nil {
+		c <- TestResult{name, false, err}
+		return
+	}
+	defer resp.Body.Close()
+	if err != nil {
+		c <- TestResult{name, false, err}
+		return
+	}
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		c <- TestResult{name, false, err}
+		return
+	}
+
+	a.Result = string(bodyBytes)
+	c <- TestResult{name, (resp.StatusCode >= 200 && resp.StatusCode < 300), nil}
+}
+
+func (a *APITest) UnauthorizedClientTest(c chan TestResult, name string) {
+	token, err := okta.GenerateToken("nike.sapae.unauthorizedid", os.Getenv("UNAUTHORIZEDID_SECRET"), false)
+
+	if err != nil {
+		c <- TestResult{name, false, err}
+		return
+	}
+
+	client := &http.Client{}
+	req, err := http.NewRequest(a.Method, a.APIProxy.Url+a.Path, strings.NewReader(a.Payload))
+	if err != nil {
+		c <- TestResult{name, false, err}
+		return
+	}
+
+	req.Header.Add("Authorization", "Bearer " + token)
+	resp, err := client.Do(req)
+	if err != nil {
+		c <- TestResult{name, false, err}
+		return
+	}
 	resp.Body.Close()
-}
-
-type OktaResponse struct {
-	Token string `json:"access_token"`
-}
-
-func GenerateToken(clientID, secret string) (string, error) {
-	data := url.Values{}
-	data.Set("client_id", clientID)
-	data.Set("client_secret", secret)
-	data.Set("grant_type", "client_credentials")
-
-	client := &http.Client{}
-	req, err := http.NewRequest("POST", oktaURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode != 200 {
-		return "", errors.New("Non 200 response Code")
-	}
-
-	var r OktaResponse
-	err = json.NewDecoder(resp.Body).Decode(&r)
-	if err != nil {
-		return "", err
-	}
-
-	return r.Token, nil
-}
-
-func UnauthorizedClientTest(c chan TestResult, url, method, name string) {
-	token, err := GenerateToken("nike.sapae.unauthorizedid", os.Getenv("UNAUTHORIZEDID_SECRET"))
 
 	if err != nil {
 		c <- TestResult{name, false, err}
 		return
 	}
-	resp, err := APICall(url, token, method)
-	if err != nil {
-		c <- TestResult{name, false, err}
-		return
-	}
-
 	// CallAPI should retun a non 200 response
 	c <- TestResult{name, !(resp.StatusCode >= 200 && resp.StatusCode < 300), nil}
-	resp.Body.Close()
 }

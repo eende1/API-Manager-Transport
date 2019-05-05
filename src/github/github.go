@@ -1,31 +1,30 @@
 package github
 
 import (
-	"errors"
 	"archive/zip"
 	"fmt"
 	"gopkg.in/src-d/go-billy.v4"
 	"gopkg.in/src-d/go-billy.v4/memfs"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
-	githttp "gopkg.in/src-d/go-git.v4/plumbing/transport/http"
+	"gopkg.in/src-d/go-git.v4/plumbing/transport/http"
 	"gopkg.in/src-d/go-git.v4/storage/memory"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"io"
 	"path/filepath"
 	"time"
-	"sync"
 	"tenant"
-	"apiinfo"
+	"apiproxy"
 )
 
+const tenantSyncIntervalMinutes = 20
+
 type Sync struct {
-	Proxies map[string][]byte
-	TenantName string
+	Proxies apiproxy.APIProxies
 	LogMessage string
+	OpenAPISpec string
 }
 
 type Repo struct {
@@ -37,7 +36,7 @@ type Repo struct {
 func GithubTenantSync(tenantLock *tenant.Lock, syncIn chan Sync, syncOut chan error) {
 	tenantName := "sandbox"
 	for {
-		time.Sleep(20 * time.Second)
+		time.Sleep(tenantSyncIntervalMinutes * time.Second)
 		fmt.Println(tenantName)
 		// Acquire lock on tenant
 		lock, ok := (*tenantLock).Map[tenantName]
@@ -46,13 +45,21 @@ func GithubTenantSync(tenantLock *tenant.Lock, syncIn chan Sync, syncOut chan er
 		}
 		(*lock).Lock()
 
-		apiProxies, err := getAllAPIZip(tenantName, os.Getenv("SCPI_AUTH"))
+		apiProxies, err := apiproxy.GetAll(tenantName, os.Getenv("SCPI_AUTH"))
 		if err != nil {
 			(*lock).Unlock()
 			tenantName = tenant.Advance(tenantName)
 			continue
 		}
-		syncIn <- Sync{apiProxies, tenantName, ""}
+
+		err = apiProxies.PopulateZips()
+		if err != nil {
+			(*lock).Unlock()
+			tenantName = tenant.Advance(tenantName)
+			continue
+		}
+		fmt.Println("synching")
+		syncIn <- Sync{apiProxies, "", ""}
 		<- syncOut
 		(*lock).Unlock()
 		tenantName = tenant.Advance(tenantName)
@@ -67,29 +74,37 @@ func StartGithubHandler(syncIn chan Sync, syncOut chan error) {
 
 	for {
 		toSync := <- syncIn
-		apimRepo.SyncAPIs(toSync.Proxies, toSync.TenantName, toSync.LogMessage)
+		apimRepo.SyncAPIs(toSync.Proxies, toSync.LogMessage, toSync.OpenAPISpec)
 		syncOut <- nil
 	}
 }
 
-func (g *Repo) SyncAPIs(proxies map[string]([]byte), tenantName, logMessage string) {	
-	for name, proxy := range proxies {
-		err := unzip(proxy, &(g.fs), fmt.Sprintf("%s/%s", tenantName, name))
+func (g *Repo) SyncAPIs(proxies apiproxy.APIProxies, logMessage string, openAPISpec string) {
+	for _, proxy := range proxies.APIs {
+		err := unzipInGitRepository(proxy.Zip, &(g.fs), fmt.Sprintf("%s/%s", proxy.Tenant, proxy.Name))
 		if err != nil {
 			log.Printf("Failed to unzip in SyncAPIS\n")
 		}
-		// Include a log message unless an empty message was passed.
-		if logMessage != "" {
-			err = logChange(logMessage, fmt.Sprintf("%s/%s/%s", tenantName, name, "change_log.txt"), &(g.fs))
-			if err != nil {
-				log.Printf("Failed to log change in SyncAPIS\n")
-				return
-			}
+
+		err = logChange(logMessage, fmt.Sprintf("%s/%s/%s", proxy.Tenant, proxy.Name, "change_log.txt"), &(g.fs))
+		if err != nil {
+			log.Printf("Failed to log change in SyncAPIS\n")
+			return
+		}
+
+		err = writeOpenAPISpec(openAPISpec, fmt.Sprintf("%s/%s/%s", proxy.Tenant, proxy.Name, "spec.json"), &(g.fs))
+		if err != nil {
+			log.Printf("Failed to write openAPISpec SyncAPIS\n")
+			return
 		}
 	}
+	g.commitRepo("commit by sync process")
+}
+
+func (g *Repo) commitRepo(commitMessage string) {
 	g.worktree.AddGlob("*")
 
-	_, err := g.worktree.Commit("example go-git commit", &git.CommitOptions{
+	_, err := g.worktree.Commit(commitMessage, &git.CommitOptions{
 		Author: &object.Signature{
 			Name: "Backup Process",
 			When: time.Now(),
@@ -97,16 +112,18 @@ func (g *Repo) SyncAPIs(proxies map[string]([]byte), tenantName, logMessage stri
 	})
 	if err != nil {
 		fmt.Println(err)
+		return
 	}
 
 	err = g.r.Push(&git.PushOptions{
-		Auth: &githttp.BasicAuth{
+		Auth: &http.BasicAuth{
 			Username: "tandr9",
 			Password: os.Getenv("GITHUB_TOKEN"),
 		},
 	})
 	if err != nil {
 		fmt.Println(err)
+		return
 	}
 }
 
@@ -116,7 +133,7 @@ func initializeGithubRepo() (Repo, error){
 
 	g, err := git.Clone(storer, fs, &git.CloneOptions{
 		URL: "https://api.github.nike.com/scp/APIM-Backup",
-		Auth: &githttp.BasicAuth{
+		Auth: &http.BasicAuth{
 			Username: "tandr9",
 			Password: os.Getenv("GITHUB_TOKEN"),
 		},
@@ -130,68 +147,7 @@ func initializeGithubRepo() (Repo, error){
 	return Repo{fs, g, w}, err
 }
 
-type safeMap struct {
-	mux sync.Mutex
-	m   map[string][]byte
-}
-
-func getAllAPIZip(tenantName, auth string) (map[string][]byte, error) {
-	APIProxies, err := apiinfo.GetAllAPINames(tenantName, auth)
-	if err != nil {
-		return nil, err
-	}
-	done := make(chan bool, len(APIProxies.APIs))
-	//m := make(map[string][]byte)
-	sm := safeMap{m: make(map[string][]byte)}
-	for _, a := range APIProxies.APIs {
-		go getAPIZip(done, tenantName, a.Name, auth, &sm)
-	}
-
-	success := true
-	for i := 0; i < len(APIProxies.APIs); i++ {
-		success = success && <-done
-	}
-	close(done)
-	if !success {
-		return nil, errors.New("Encountered error getting an API Zip")
-	}
-	return sm.m, nil
-}
-
-func getAPIZip(c chan bool, tenantName, apiName, auth string, sm *safeMap) {
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies?name=%s", tenant.Get(tenantName), apiName), nil)
-	if err != nil {
-		c <- false
-		return
-	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
-	resp, err := client.Do(req)
-	if err != nil {
-		c <- false
-		return
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		c <- false
-		return
-	}
-
-	if resp.StatusCode != 200 {
-		c <- false
-		return
-	}
-	(*sm).mux.Lock()
-	(*sm).m[apiName] = respBytes
-	(*sm).mux.Unlock()
-	c <- true
-}
-
-func unzip(proxy []byte, fs *billy.Filesystem, stem string) error {
+func unzipInGitRepository(proxy []byte, fs *billy.Filesystem, stem string) error {
 	file, err := ioutil.TempFile("", "zip")
 	if err != nil {
 		return err
@@ -258,7 +214,10 @@ func unzip(proxy []byte, fs *billy.Filesystem, stem string) error {
 }
 
 func writeOpenAPISpec(spec, filename string, fs *billy.Filesystem) error {
-	f, err := (*fs).OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0600)
+	if spec == "" {
+		return nil
+	}
+ 	f, err := (*fs).OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
 	}
@@ -270,6 +229,10 @@ func writeOpenAPISpec(spec, filename string, fs *billy.Filesystem) error {
 }
 
 func logChange(change, filename string, fs *billy.Filesystem) error {
+	if change == "" {
+		return nil
+	}
+
 	f, err := (*fs).OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err

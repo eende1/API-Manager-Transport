@@ -5,15 +5,6 @@ import (
 	"testing"
 )
 
-func TestGenerateToken(t *testing.T) {
-	token, err := GenerateToken("nike.sapae.unauthorizedid",
-		"n4YFiCwufDiUzUO7tQVjcccsU3nmPt9W5aiVEFWGgskFVcSJ9v9XN98eqCE3dOOW")
-	t.Log(token)
-	if err != nil {
-		t.Errorf("returned an error: %s", err)
-	}
-}
-
 func TestUnauthorizedClientTest(t *testing.T) {
 	c := make(chan TestResult)
 	go UnauthorizedClientTest(c, "https://postman-echo.com/get", "GET", "unathorized client test")
@@ -69,17 +60,6 @@ func TestKVMAuthorizationTest(t *testing.T) {
 	}
 }
 
-func TestGetAPIURL(t *testing.T) {
-	auth := os.Getenv("SCPI_AUTH")
-	url, err := GetAPIURL("dev", "API_NIKE_CONVERSE_GET_ORDER_STATUS", auth)
-	if err != nil {
-		t.Errorf("returned an error: %s", err)
-	}
-	if url != "/Converse/OrderStatus" {
-		t.Error("returned incorrect url")
-	}
-}
-
 func TestAPICall(t *testing.T) {
 	resp, err := APICall("http://postman-echo.com/get", "no auth", "GET")
 	if err != nil {
@@ -90,10 +70,9 @@ func TestAPICall(t *testing.T) {
 	}
 }
 
-
 func TestAPICallTest(t *testing.T) {
 	c := make(chan TestResult)
-	go APICallTest(c, "http://postman-echo.com/get", "GET", "notokenneeded", "API Call Test")
+	go APICallTest(c, "http://postman-echo.com/get", "notokenneeded", "GET",  "API Call Test")
 	result := <-c
 	if result.Err != nil {
 		t.Errorf("returned an error: %s", result.Err)
