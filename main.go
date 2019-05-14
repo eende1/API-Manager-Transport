@@ -6,6 +6,8 @@ import (
 	"apitesting"
 	"apitransport"
 	"github.com/gorilla/mux"
+	"github.com/apex/log"
+	"github.com/apex/log/handlers/json"
 	"net/http"
 	"os"
 	"github"
@@ -27,6 +29,8 @@ func main() {
 	if os.Getenv("DEVPORTAL_SECRET") == "" {
 		panic("No Github token in environment. Please specify a token on the environment variable GITHUB_TOKEN.")
 	}
+
+	log.SetHandler(json.New(os.Stderr))
 
 	syncIn := make(chan github.Sync)
 	syncOut := make(chan error)

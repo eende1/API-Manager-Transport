@@ -9,7 +9,7 @@ import (
 	"strings"
 	"okta"
 	"apiproxy"
-	"log"
+	"github.com/apex/log"
 )
 
 const devPortalProjectsURL = "https://api-developer.niketech.com/prod/v1/projects"
@@ -18,10 +18,12 @@ const devPortalUser = "nike.sapcp.entcat"
 func Handler(c chan apiproxy.APIProxy) {
 	for {
 		api := <- c
+		ctx := log.WithFields(log.Fields{
+			"api": api.Name,
+			"tenant": api.Tenant,
+		})
 		err := createDevPortalProject(api.Name, api.Description)
-		if err != nil {
-			log.Printf("Failed to create dev portal project for %s with error %s", api.Name, err)
-		}
+		ctx.Trace("DevPortal Creation").Stop(&err)
 	}
 }
 

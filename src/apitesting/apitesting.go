@@ -11,6 +11,7 @@ import (
 	"strings"
 	"io/ioutil"
 	"github.com/gorilla/mux"
+	"github.com/apex/log"
 	"okta"
 	"apiproxy"
 )
@@ -40,10 +41,20 @@ type Responses []TestResult
 
 func Handler(w http.ResponseWriter, r *http.Request) {
 	apiTest, err := ParseApiTest(r)
+	ctx := log.WithFields(log.Fields{
+		"path": apiTest.Path,
+		"method": apiTest.Method,
+		"email": apiTest.Email,
+		"api": apiTest.APIProxy.Name,
+		"tenant": apiTest.APIProxy.Tenant,
+		"url": apiTest.APIProxy.Url,
+	})
+	defer ctx.Trace("Testing").Stop(&err)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("{'error':'%s'}", err), 400)
 		return
 	}
+
 	testResults := make(chan TestResult, NumTests)
 	apiTest.ExecuteTests(testResults)
 
@@ -58,6 +69,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("{'status':'%s'}", err.Error()), 500)
 		return
 	}
+
 	w.Write([]byte(resultJson))
 }
 

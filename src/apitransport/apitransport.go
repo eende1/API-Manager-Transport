@@ -8,6 +8,7 @@ import (
 	"tenant"
 	"github"
 	"encoding/json"
+	"github.com/apex/log"
 	"apitesting"
 	"apiproxy"
 	"strings"
@@ -19,6 +20,15 @@ const conversionIflowURL = "https://l5347-iflmap.hcisbp.us2.hana.ondemand.com/ht
 func CreateTransportHandler(tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error, devportalIn chan apiproxy.APIProxy) (func (w http.ResponseWriter, r *http.Request)) {
 return func (w http.ResponseWriter, r *http.Request) {
 	apiTest, err := apitesting.ParseApiTest(r)
+		ctx := log.WithFields(log.Fields{
+		"path": apiTest.Path,
+		"method": apiTest.Method,
+		"email": apiTest.Email,
+		"api": apiTest.APIProxy.Name,
+		"tenant": apiTest.APIProxy.Tenant,
+		"url": apiTest.APIProxy.Url,
+	})
+	defer ctx.Trace("Transport").Stop(&err)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("{'status':'%s'}", err), 400)
 		return
@@ -31,7 +41,6 @@ return func (w http.ResponseWriter, r *http.Request) {
 
 	// Assume highest tenant, degrade if otherwise
 	kvmAuthTenant := "prod"
-	fmt.Println(apiTest.APIProxy.Tenant)
 	if apiTest.APIProxy.Tenant == "dev" {
 		kvmAuthTenant = "qa"
 	}
@@ -52,8 +61,6 @@ return func (w http.ResponseWriter, r *http.Request) {
 		t := apitesting.TestResult{"transport", false, nil}
 		resp, err := Transport(apiTest, tenantLock, syncIn, syncOut)
 
-		//resp, err := true, error(nil)
-		fmt.Println(err)
 		if err == nil && resp {
 			t.Pass = true
 			devportalIn <- apiTest.APIProxy

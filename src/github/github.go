@@ -9,17 +9,18 @@ import (
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
 	"gopkg.in/src-d/go-git.v4/plumbing/transport/http"
 	"gopkg.in/src-d/go-git.v4/storage/memory"
+	"github.com/apex/log"
 	"io/ioutil"
-	"log"
 	"os"
 	"io"
 	"path/filepath"
 	"time"
 	"tenant"
 	"apiproxy"
+	"errors"
 )
 
-const tenantSyncIntervalMinutes = 20
+const tenantSyncIntervalMinutes = 1
 
 type Sync struct {
 	Proxies apiproxy.APIProxies
@@ -36,11 +37,14 @@ type Repo struct {
 func GithubTenantSync(tenantLock *tenant.Lock, syncIn chan Sync, syncOut chan error) {
 	tenantName := "sandbox"
 	for {
-		time.Sleep(tenantSyncIntervalMinutes * time.Second)
-		fmt.Println(tenantName)
+		time.Sleep(tenantSyncIntervalMinutes * time.Minute)
 		// Acquire lock on tenant
 		lock, ok := (*tenantLock).Map[tenantName]
+		ctx := log.WithFields(log.Fields{
+			"tenant": tenantName,
+		})
 		if !ok {
+			ctx.Trace("Github Sync").Error("Github Sync: Failed to get lock")
 			continue
 		}
 		(*lock).Lock()
@@ -49,6 +53,7 @@ func GithubTenantSync(tenantLock *tenant.Lock, syncIn chan Sync, syncOut chan er
 		if err != nil {
 			(*lock).Unlock()
 			tenantName = tenant.Advance(tenantName)
+			ctx.Trace("Github Sync: Failed to get proxies").Stop(&err)
 			continue
 		}
 
@@ -56,12 +61,21 @@ func GithubTenantSync(tenantLock *tenant.Lock, syncIn chan Sync, syncOut chan er
 		if err != nil {
 			(*lock).Unlock()
 			tenantName = tenant.Advance(tenantName)
+			ctx.Trace("Github Sync: Failed to get zips").Stop(&err)
 			continue
 		}
-		fmt.Println("synching")
+
 		syncIn <- Sync{apiProxies, "", ""}
-		<- syncOut
+		err = <-syncOut
 		(*lock).Unlock()
+
+
+		if err != nil {
+			ctx.WithField("API Count", len(apiProxies.APIs)).Trace("Github Sync: Failed to Sync APIs").Stop(&err)
+		} else {
+			ctx.WithField("API Count", len(apiProxies.APIs)).Info("Github Sync")
+		}
+
 		tenantName = tenant.Advance(tenantName)
 	}
 }
@@ -74,31 +88,36 @@ func StartGithubHandler(syncIn chan Sync, syncOut chan error) {
 
 	for {
 		toSync := <- syncIn
-		apimRepo.SyncAPIs(toSync.Proxies, toSync.LogMessage, toSync.OpenAPISpec)
-		syncOut <- nil
+		syncOut <- apimRepo.SyncAPIs(toSync.Proxies, toSync.LogMessage, toSync.OpenAPISpec)
+		if err != nil {
+			log.WithField("error", err.Error()).Error("Failed to synch Proxies")
+		}
+		//syncOut <- nil
 	}
 }
 
-func (g *Repo) SyncAPIs(proxies apiproxy.APIProxies, logMessage string, openAPISpec string) {
+func (g *Repo) SyncAPIs(proxies apiproxy.APIProxies, logMessage string, openAPISpec string) error {
 	for _, proxy := range proxies.APIs {
 		err := unzipInGitRepository(proxy.Zip, &(g.fs), fmt.Sprintf("%s/%s", proxy.Tenant, proxy.Name))
 		if err != nil {
-			log.Printf("Failed to unzip in SyncAPIS\n")
+			//log.Printf("Failed to unzip in SyncAPIS\n")
+			return errors.New("Failed to unzip proxy")
 		}
 
 		err = logChange(logMessage, fmt.Sprintf("%s/%s/%s", proxy.Tenant, proxy.Name, "change_log.txt"), &(g.fs))
 		if err != nil {
-			log.Printf("Failed to log change in SyncAPIS\n")
-			return
+			//log.Printf("Failed to log change in SyncAPIS\n")
+			return errors.New("Failed to log change")
 		}
 
 		err = writeOpenAPISpec(openAPISpec, fmt.Sprintf("%s/%s/%s", proxy.Tenant, proxy.Name, "spec.json"), &(g.fs))
 		if err != nil {
-			log.Printf("Failed to write openAPISpec SyncAPIS\n")
-			return
+			//log.Printf("Failed to write openAPISpec SyncAPIS\n")
+			return errors.New("Failed to write open API Spec")
 		}
 	}
 	g.commitRepo("commit by sync process")
+	return nil
 }
 
 func (g *Repo) commitRepo(commitMessage string) {

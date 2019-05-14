@@ -100,7 +100,8 @@ func GetAll(tenantName, auth string) (APIProxies, error) {
 	if err != nil {
 		return a, err
 	}
-	if (len(a.APIs) == 0) {
+
+	if (len(a.APIs) < 2) {
 		return a, errors.New(fmt.Sprintf("Failed to get API Proxies"))
 	}
 
@@ -110,7 +111,6 @@ func GetAll(tenantName, auth string) (APIProxies, error) {
 		a.APIs[i].Url = fmt.Sprintf("https://nikescp%s.apimanagement.us2.hana.ondemand.com%s", a.APIs[i].Tenant, a.APIs[i].Url)
 		a.APIs[i].OData = true
 	}
-
 	return a, nil
 }
 
@@ -140,24 +140,24 @@ func (api *APIProxy) GetZip(c chan error) {
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://produs2apiportalapimgmtpphx-%s.us2.hana.ondemand.com/apiportal/api/1.0/Transport.svc/APIProxies?name=%s", tenant.Get(api.Tenant), api.Name), nil)
 	if err != nil {
 		c <- err
+		return
 	}
 	req.Header.Add("Authorization", "Basic "+api.Auth)
 	resp, err := client.Do(req)
-
 	if err != nil {
 		c <- err
+		return
 	}
-	defer resp.Body.Close()
 
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		c <- errors.New(fmt.Sprintf("Returned non 200 response getting APIProxy for %s in %s: %s", api.Name, api.Tenant, resp.Status))
+		return
 	}
 
 	api.Zip, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		c <- err
-	}
-	c <- nil
+
+	c <- err
 }
 
 // Tranports an API Proxy from one tenant to the next.
