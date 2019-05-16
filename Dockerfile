@@ -8,6 +8,8 @@ WORKDIR /
 RUN go get github.com/gorilla/mux
 RUN go get gopkg.in/src-d/go-billy.v4
 RUN go get gopkg.in/src-d/go-git.v4
+RUN go get gopkg.in/ldap.v3
+
 RUN GOOS=linux go build -ldflags="-s -w" -o go/bin/test go/main.go
 
 FROM alpine:3.8

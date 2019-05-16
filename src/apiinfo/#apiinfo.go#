@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/apex/log"
+	"github.com/apex/log/handlers/json"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -25,7 +26,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	log.WithFields(log.Fields{
 		"tenant": tenantName,
 		"target": vars["target"],
-	}).Info("API Info")
+	}).Info("upload")
 	resp, err := APIInfoCall(tenantName, vars["target"], auth)
 
 	if err != nil {
