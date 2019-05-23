@@ -30,7 +30,13 @@ func main() {
 		panic("No Github token in environment. Please specify a token on the environment variable GITHUB_TOKEN.")
 	}
 
-	log.SetHandler(json.New(os.Stderr))
+	logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		panic(err)
+	}
+
+	defer logFile.Close()
+	log.SetHandler(json.New(logFile))
 
 	syncIn := make(chan github.Sync)
 	syncOut := make(chan error)
