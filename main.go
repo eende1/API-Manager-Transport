@@ -30,7 +30,7 @@ func main() {
 		panic("No Github token in environment. Please specify a token on the environment variable GITHUB_TOKEN.")
 	}
 
-	logFile, err := os.OpenFile("logs.txt", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	logFile, err := os.OpenFile("/logging/logs.txt", os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		panic(err)
 	}
