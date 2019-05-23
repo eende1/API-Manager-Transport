@@ -20,7 +20,7 @@ import (
 	"errors"
 )
 
-const tenantSyncIntervalMinutes = 1
+const tenantSyncIntervalMinutes = 15
 
 type Sync struct {
 	Proxies apiproxy.APIProxies
