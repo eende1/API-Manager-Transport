@@ -21,10 +21,10 @@ UNAUTHORIZEDID_SECRET={Okta secret}
 DEVPORTAL_SECRET={Okta secret}
 ```
 
-#### Screenshots
-##### Main Screen
+### Screenshots
+#### Main Screen
 ![Image of SAPAE API Manager](./screenshots/main.png)
-##### Search
+#### Search
 ![Image of SAPAE API Manager](./screenshots/search.png)
-##### Transport Screen
+#### Transport Screen
 ![Image of SAPAE API Manager](./screenshots/transport.png)
