@@ -22,6 +22,9 @@ DEVPORTAL_SECRET={Okta secret}
 ```
 
 #### Screenshots
+##### Main Screen
 ![Image of SAPAE API Manager](./screenshots/main.png)
+##### Search
 ![Image of SAPAE API Manager](./screenshots/search.png)
+##### Transport Screen
 ![Image of SAPAE API Manager](./screenshots/transport.png)
