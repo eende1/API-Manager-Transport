@@ -1,3 +1,4 @@
+// Package github provides functions for syncing Proxies to a github repository
 package github
 
 import (

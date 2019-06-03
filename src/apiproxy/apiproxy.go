@@ -1,3 +1,5 @@
+// Package apiproxy is a wrapper around a few endpoints from the API Manager
+// APIs.
 package apiproxy
 
 import (

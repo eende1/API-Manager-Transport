@@ -1,3 +1,4 @@
+// Package apitransport provides functions for transport API Proxies.
 package apitransport
 
 import (

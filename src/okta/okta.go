@@ -1,3 +1,4 @@
+// Package Okta provides function for generating okta tokens.
 package okta
 
 import (

@@ -1,3 +1,4 @@
+// Pacakge apitesting provides functioons for testing an api proxy.
 package apitesting
 
 import (

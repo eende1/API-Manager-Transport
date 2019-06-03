@@ -1,3 +1,5 @@
+// Package tenant provides functions for getting tenant information and
+// synching change operations on tenants.
 package tenant
 
 import (
