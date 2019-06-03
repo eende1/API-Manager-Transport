@@ -3,11 +3,20 @@ package apitesting
 import (
 	"os"
 	"testing"
+	"apiproxy"
 )
 
 func TestUnauthorizedClientTest(t *testing.T) {
 	c := make(chan TestResult)
-	go UnauthorizedClientTest(c, "https://postman-echo.com/get", "GET", "unathorized client test")
+	a := apiproxy.APIProxy{}
+	a.Url = "https://postman-echo.com/get"
+
+	test := APITest{}
+	test.APIProxy = a
+	test.Method = "GET"
+
+	go (&test).UnauthorizedClientTest(c, "unauthorized client test")
+
 	result := <-c
 	if result.Err != nil {
 		t.Errorf("returned an error: %s", result.Err)
@@ -16,7 +25,14 @@ func TestUnauthorizedClientTest(t *testing.T) {
 		t.Errorf("should have received false")
 	}
 
-	go UnauthorizedClientTest(c, "https://nikescpdev.apimanagement.us2.hana.ondemand.com/DeliveryDetails/$metadata", "GET", "unathorized client test")
+	b := apiproxy.APIProxy{}
+	b.Url = "https://nikescpdev.apimanagement.us2.hana.ondemand.com/DeliveryDetails/$metadata"
+
+	test2 := APITest{}
+	test2.APIProxy = b
+	test2.Method = "GET"
+	go (&test2).UnauthorizedClientTest(c, "unathorized client test")
+
 	result = <-c
 	if result.Err != nil {
 		t.Errorf("returned an error: %s", result.Err)
@@ -60,19 +76,15 @@ func TestKVMAuthorizationTest(t *testing.T) {
 	}
 }
 
-func TestAPICall(t *testing.T) {
-	resp, err := APICall("http://postman-echo.com/get", "no auth", "GET")
-	if err != nil {
-		t.Errorf("returned an error: %s", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("returned non 200 response code")
-	}
-}
-
 func TestAPICallTest(t *testing.T) {
 	c := make(chan TestResult)
-	go APICallTest(c, "http://postman-echo.com/get", "notokenneeded", "GET",  "API Call Test")
+	a := apiproxy.APIProxy{}
+	a.Url = "https://postman-echo.com/get"
+
+	test := APITest{}
+	test.APIProxy = a
+	test.Method = "GET"
+	go (&test).APICallTest(c, "API Call Test")
 	result := <-c
 	if result.Err != nil {
 		t.Errorf("returned an error: %s", result.Err)
