@@ -93,7 +93,7 @@ func StartGithubHandler(syncIn chan Sync, syncOut chan error) {
 		if err != nil {
 			log.WithField("error", err.Error()).Error("Failed to synch Proxies")
 		}
-		//syncOut <- nil
+		syncOut <- nil
 	}
 }
 
