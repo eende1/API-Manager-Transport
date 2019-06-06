@@ -80,12 +80,14 @@ return func (w http.ResponseWriter, r *http.Request) {
 
 // Tranports an API Proxy from one tenant to the next while holding locks, then Sync with Github.
 func Transport(apiTest apitesting.APITest, tenantLock *tenant.Lock, syncIn chan github.Sync, syncOut chan error) (bool, error) {
+
 	lock, ok := (*tenantLock).Map[apiTest.APIProxy.Tenant]
 	if !ok {
 		return false, errors.New("Failed to get lock for this tenant in transport")
 	}
 	(*lock).Lock()
 	defer (*lock).Unlock()
+
 	c := make(chan error)
 	go apiTest.APIProxy.GetZip(c)
 	err := <-c
@@ -97,7 +99,6 @@ func Transport(apiTest apitesting.APITest, tenantLock *tenant.Lock, syncIn chan 
 	if err != nil {
 		return false, err
 	}
-
 	OpenAPISpec := ""
 	if apiTest.APIProxy.OData {
 		OpenAPISpec, err = convertMetaDatatoOpenAPI(apiTest.Result)
@@ -105,12 +106,10 @@ func Transport(apiTest apitesting.APITest, tenantLock *tenant.Lock, syncIn chan 
 			fmt.Println("failed to convert metadata")
 		}
 	}
-
 	proxies := apiproxy.APIProxies{}
 	proxies.APIs = append(proxies.APIs, apiTest.APIProxy)
 	syncIn <- github.Sync{proxies, fmt.Sprintf("API Transported by %s", apiTest.Email), OpenAPISpec}
 	<- syncOut
-
  	return true, nil
 }
 

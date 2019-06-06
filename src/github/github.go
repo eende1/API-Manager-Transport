@@ -89,11 +89,11 @@ func StartGithubHandler(syncIn chan Sync, syncOut chan error) {
 
 	for {
 		toSync := <- syncIn
-		syncOut <- apimRepo.SyncAPIs(toSync.Proxies, toSync.LogMessage, toSync.OpenAPISpec)
+		err = apimRepo.SyncAPIs(toSync.Proxies, toSync.LogMessage, toSync.OpenAPISpec)
+		syncOut <- err
 		if err != nil {
 			log.WithField("error", err.Error()).Error("Failed to synch Proxies")
 		}
-		syncOut <- nil
 	}
 }
 
