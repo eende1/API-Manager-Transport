@@ -154,7 +154,7 @@ func initializeGithubRepo() (Repo, error){
 	g, err := git.Clone(storer, fs, &git.CloneOptions{
 		URL: "https://api.github.nike.com/scp/APIM-Backup",
 		Auth: &http.BasicAuth{
-			Username: "tandr9",
+			Username: "kyoo1",
 			Password: os.Getenv("GITHUB_TOKEN"),
 		},
 	})
