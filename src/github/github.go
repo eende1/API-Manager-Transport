@@ -137,7 +137,7 @@ func (g *Repo) commitRepo(commitMessage string) {
 
 	err = g.r.Push(&git.PushOptions{
 		Auth: &http.BasicAuth{
-			Username: "tandr9",
+			Username: "kyoo1",
 			Password: os.Getenv("GITHUB_TOKEN"),
 		},
 	})
