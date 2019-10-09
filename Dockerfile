@@ -11,7 +11,7 @@ RUN go get gopkg.in/src-d/go-git.v4
 RUN go get gopkg.in/ldap.v3
 RUN go get github.com/apex/log
 
-RUN GOOS=linux go build -ldflags="-s -w" -o go/bin/test go/main.go
+RUN GOOS=windows go build -ldflags="-s -w" -o go/bin/test go/main.go
 
 FROM alpine:3.8
 RUN apk --no-cache add ca-certificates
